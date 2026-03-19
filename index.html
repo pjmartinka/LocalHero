@@ -91,6 +91,10 @@ nameInput.addEventListener('keydown',e=>{
 
 // ── INPUT ──
 function jump(){
+  // silently go fullscreen on first interaction (works on Android Chrome, no-ops on iOS)
+  if(document.documentElement.requestFullscreen && !document.fullscreenElement){
+    document.documentElement.requestFullscreen().catch(()=>{});
+  }
   if(st==='leaderboard'){st='title';return;}
   if(st==='title'){reset();return;}
   if(st==='dead'||submitting) return;
@@ -779,21 +783,25 @@ function loop(){
     bgTow.forEach(t=>t.x-=spd);bgTow=bgTow.filter(t=>t.x>-120);
     if(--nextSL<=0){seaL.push({x:80+Math.random()*(W-160),ph:Math.random()*Math.PI*2,life:0});nextSL=480+Math.floor(Math.random()*520);}
     seaL.forEach(s=>s.life++);seaL=seaL.filter(s=>s.life<SEA_LIFE);
-    // cat companion — unlocks at 500 points, doubles in size every 500 after
+    // cat companion — unlocks at 500 points, grows 1→2→3→4→5x every 500 after
     if(sc>=500&&!catUnlocked){
       catUnlocked=true;catScale=1;
       popups.push({x:PX-20,y:P.y-20,text:'🐱 a cat!',life:0,color:'#F0C820'});
     }
     if(catUnlocked){
-      const newScale=Math.pow(2,Math.floor((sc-500)/500));
+      const newScale=Math.min(5,1+Math.floor((sc-500)/500));
       if(newScale>catScale){
         catScale=newScale;
         popups.push({x:PX-20,y:P.y-20,text:'😱 bigger cat!',life:0,color:'#F0C820'});
       }
-      // cat bounces along behind player, mimics jump with a slight delay
+      // catY tracks the TOP of the cat drawing; paws are 18px below that at scale 1
+      // ground for paws = GND, so top of cat = GND - 18*catScale
+      const catPawGnd=GND;
       catVY+=GR;catY+=catVY;
-      const catGnd=GND-18*catScale;
-      if(catY>=catGnd){catY=catGnd;catVY=P.dead?0:(P.vy<-4?P.vy*.7:0);}
+      if(catY+18*catScale>=catPawGnd){
+        catY=catPawGnd-18*catScale;
+        catVY=P.dead?0:(P.vy<-4?P.vy*.75:0);
+      }
     }
     // popup tick — must happen before filter
     popups.forEach(p=>{p.life++;p.y-=0.9;});
@@ -822,11 +830,13 @@ function loop(){
     obs.filter(o=>o.t==='gap').forEach(drawObs);
     if(catUnlocked){
       ctx.save();
-      // scale from bottom-center of cat so it grows upward from ground
-      const cx=PX-38,cy=catY;
-      ctx.translate(cx+12,cy+18); // pivot at paw level
+      // catY is already the top of the unscaled cat (paws at catY+18*catScale)
+      // translate to paw level, scale up, then draw with offset so paws sit at origin
+      const pawX=PX-38+12; // horizontal center of cat
+      const pawY=catY+18*catScale; // actual paw Y in world coords
+      ctx.translate(pawX,pawY);
       ctx.scale(catScale,catScale);
-      drawCat(-12,-18);
+      drawCat(-12,-18); // draw cat so paws are at (0,0) in scaled space
       ctx.restore();
     }
     drawPlayer();
