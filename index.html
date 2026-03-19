@@ -7,19 +7,10 @@
 <title>Local Hero</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{height:100%;overflow:hidden;touch-action:none}
-  body{background:#0A1810;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:monospace;overscroll-behavior:none}
-  #wrap{position:relative;width:100%;max-width:700px}
-  canvas{display:block;width:100%;border-radius:10px;cursor:pointer}
-  #nameBox{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(8,20,10,.97);border:1.5px solid #2A6A38;border-radius:10px;padding:18px 24px;text-align:center;min-width:240px;z-index:10}
-  #nameBox .title{color:#B8F4CC;font-size:14px;font-weight:bold;margin-bottom:4px}
-  #nameScore{color:#4AB870;font-size:12px;margin-bottom:12px}
-  #nameInput{background:#0C1E10;border:1px solid #2A6A38;border-radius:5px;color:#B8F4CC;font-family:monospace;font-size:16px;padding:7px 10px;width:148px;text-align:center;outline:none}
-  #nameInput:focus{border-color:#4AB870}
-  .nbtn{border:none;border-radius:5px;font-family:monospace;font-size:16px;padding:10px 22px;cursor:pointer;margin-top:12px;touch-action:manipulation}
-  #submitBtn{background:#2A6A38;color:#B8F4CC;margin-right:6px}
-  #skipBtn{background:#1A2C1E;border:1px solid #2A4A28;color:#5A8A68}
-  .hint{text-align:center;margin-top:8px;font-size:11px;color:#3A6A48}
+  html,body{width:100%;height:100%;overflow:hidden;touch-action:none;background:#0A1810;overscroll-behavior:none;font-family:monospace}
+  #wrap{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0A1810}
+  canvas{display:block;cursor:pointer;border-radius:6px}
+  .hint{font-size:11px;color:#3A6A48;margin-top:6px;text-align:center}
   #orient{display:none;position:fixed;inset:0;background:#0A1810;color:#3A9A58;font-family:monospace;font-size:16px;align-items:center;justify-content:center;text-align:center;z-index:99;padding:24px}
   @media(orientation:portrait)and(max-width:500px){#orient{display:flex}}
 </style>
@@ -36,12 +27,19 @@ const WEB_APP_URL='https://script.google.com/macros/s/AKfycbwjEknVWtrvea9VmnW2d1
 
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
 
-// ── HiDPI / retina canvas scaling ──
-(function(){
-  const dpr=Math.min(window.devicePixelRatio||1,2); // cap at 2x — 3x is overkill on a game
-  cv.width=700*dpr;cv.height=230*dpr;
-  ctx.scale(dpr,dpr);
-})();
+// ── Fit canvas to viewport, maintaining 700:230 aspect ratio ──
+const GAME_W=700,GAME_H=230;
+const dpr=Math.min(window.devicePixelRatio||1,2);
+function resize(){
+  const vw=window.innerWidth,vh=window.innerHeight;
+  const scale=Math.min(vw/GAME_W,vh/(GAME_H+24)); // 24px for hint line
+  const cw=Math.floor(GAME_W*scale),ch=Math.floor(GAME_H*scale);
+  cv.style.width=cw+'px';cv.style.height=ch+'px';
+  cv.width=cw*dpr;cv.height=ch*dpr;
+  ctx.setTransform(scale*dpr,0,0,scale*dpr,0,0);
+}
+resize();
+window.addEventListener('resize',resize);
 
 // ── Pause when tab is hidden (saves battery) ──
 let paused=false;
@@ -89,7 +87,11 @@ function showNameEntry(){
   nameEntry='';nameActive=true;
   st='nameentry';
   kbd.value='';
-  setTimeout(()=>kbd.focus(),60);
+  // exit fullscreen so the keyboard doesn't get buried underneath it on Android
+  if(document.fullscreenElement && document.exitFullscreen){
+    document.exitFullscreen().catch(()=>{});
+  }
+  setTimeout(()=>kbd.focus(),120);
 }
 function hideNameEntry(){
   nameActive=false;
@@ -757,15 +759,14 @@ function drawNameEntry(){
 
 // hit-test canvas button taps during name entry
 function nameEntryTap(ex,ey){
-  // get canvas-space coords
   const rect=cv.getBoundingClientRect();
-  const sx=(ex-rect.left)/rect.width*W;
-  const sy=(ey-rect.top)/rect.height*H;
-  const sbx=W/2-106,sby=114,sbw=96,sbh=28;
-  const skbx=W/2+10,skby=114,skbw=80,skbh=28;
+  // map CSS pixels → game coordinate space (700×230)
+  const sx=(ex-rect.left)/rect.width*GAME_W;
+  const sy=(ey-rect.top)/rect.height*GAME_H;
+  const sbx=GAME_W/2-106,sby=114,sbw=96,sbh=28;
+  const skbx=GAME_W/2+10,skby=114,skbw=80,skbh=28;
   if(sx>=sbx&&sx<=sbx+sbw&&sy>=sby&&sy<=sby+sbh){doSubmit();return true;}
   if(sx>=skbx&&sx<=skbx+skbw&&sy>=skby&&sy<=skby+skbh){hideNameEntry();st='title';return true;}
-  // tap anywhere else — refocus keyboard
   kbd.focus();
   return false;
 }
@@ -774,11 +775,14 @@ function nameEntryTap(ex,ey){
 function drawTitle(){
   ctx.fillStyle='rgba(6,16,8,0.82)';ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';ctx.lineCap='butt';
-  ctx.fillStyle='#081808';ctx.font='bold 40px monospace';ctx.fillText('LOCAL HERO',W/2+2,88);
-  ctx.fillStyle='#B8F4CC';ctx.font='bold 40px monospace';ctx.fillText('LOCAL HERO',W/2,86);
-  ctx.fillStyle='#2A7A3C';ctx.fillRect(W/2-84,92,168,2);
-  if(hi>0){ctx.fillStyle='#2A6A38';ctx.font='11px monospace';ctx.fillText('best: '+String(hi).padStart(5,'0'),W/2,112);}
-  if(Math.sin(tick*.09)>0){ctx.fillStyle='#7ACCAA';ctx.font='bold 12px monospace';ctx.fillText('PRESS SPACE  ·  TAP TO START',W/2,138);}
+  ctx.fillStyle='#081808';ctx.font='bold 40px monospace';ctx.fillText('LOCAL HERO',W/2+2,78);
+  ctx.fillStyle='#B8F4CC';ctx.font='bold 40px monospace';ctx.fillText('LOCAL HERO',W/2,76);
+  ctx.fillStyle='#2A7A3C';ctx.fillRect(W/2-84,82,168,2);
+  if(hi>0){ctx.fillStyle='#2A6A38';ctx.font='11px monospace';ctx.fillText('best: '+String(hi).padStart(5,'0'),W/2,100);}
+  // spoon hint
+  ctx.fillStyle='#1EB8AA';ctx.font='12px monospace';
+  ctx.fillText('🥄=100',W/2,hi>0?118:106);
+  if(Math.sin(tick*.09)>0){ctx.fillStyle='#7ACCAA';ctx.font='bold 12px monospace';ctx.fillText('PRESS SPACE  ·  TAP TO START',W/2,hi>0?138:130);}
 }
 
 // ── LEADERBOARD ──
@@ -890,7 +894,7 @@ function loop(){
       const newScale=Math.min(5,1+Math.floor((sc-500)/500));
       if(newScale>catScale){
         catScale=newScale;
-        popups.push({x:PX-20,y:P.y-20,text:'😱 bigger cat!',life:0,color:'#F0C820'});
+        popups.push({x:PX-20,y:P.y-20,text:'🥄 FEED SPOON',life:0,color:'#F0C820'});
       }
       // catY tracks the TOP of the cat drawing; paws are 18px below that at scale 1
       // ground for paws = GND, so top of cat = GND - 18*catScale
