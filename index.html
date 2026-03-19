@@ -2,42 +2,54 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0A1810">
 <title>Local Hero</title>
 <style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{background:#0A1810;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:monospace;overflow:hidden}
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;touch-action:none}
+  body{background:#0A1810;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:monospace;overscroll-behavior:none}
   #wrap{position:relative;width:100%;max-width:700px}
-  canvas{display:block;width:100%;border-radius:10px;cursor:pointer;image-rendering:pixelated}
+  canvas{display:block;width:100%;border-radius:10px;cursor:pointer}
   #nameBox{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(8,20,10,.97);border:1.5px solid #2A6A38;border-radius:10px;padding:18px 24px;text-align:center;min-width:240px;z-index:10}
   #nameBox .title{color:#B8F4CC;font-size:14px;font-weight:bold;margin-bottom:4px}
   #nameScore{color:#4AB870;font-size:12px;margin-bottom:12px}
-  #nameInput{background:#0C1E10;border:1px solid #2A6A38;border-radius:5px;color:#B8F4CC;font-family:monospace;font-size:14px;padding:7px 10px;width:148px;text-align:center;outline:none}
+  #nameInput{background:#0C1E10;border:1px solid #2A6A38;border-radius:5px;color:#B8F4CC;font-family:monospace;font-size:16px;padding:7px 10px;width:148px;text-align:center;outline:none}
   #nameInput:focus{border-color:#4AB870}
-  .nbtn{border:none;border-radius:5px;font-family:monospace;font-size:13px;padding:8px 22px;cursor:pointer;margin-top:12px}
+  .nbtn{border:none;border-radius:5px;font-family:monospace;font-size:16px;padding:10px 22px;cursor:pointer;margin-top:12px;touch-action:manipulation}
   #submitBtn{background:#2A6A38;color:#B8F4CC;margin-right:6px}
   #skipBtn{background:#1A2C1E;border:1px solid #2A4A28;color:#5A8A68}
   .hint{text-align:center;margin-top:8px;font-size:11px;color:#3A6A48}
+  #orient{display:none;position:fixed;inset:0;background:#0A1810;color:#3A9A58;font-family:monospace;font-size:16px;align-items:center;justify-content:center;text-align:center;z-index:99;padding:24px}
+  @media(orientation:portrait)and(max-width:500px){#orient{display:flex}}
 </style>
 </head>
 <body>
+<div id="orient">📱 rotate to landscape<br><span style="font-size:11px;color:#2A6A38;margin-top:8px;display:block">for the best experience</span></div>
 <div id="wrap">
   <canvas id="c" width="700" height="230"></canvas>
-  <div id="nameBox">
-    <div class="title">GAME OVER</div>
-    <div id="nameScore"></div>
-    <input id="nameInput" maxlength="16" placeholder="your name" autocomplete="off" />
-    <br>
-    <button id="submitBtn" class="nbtn">Submit</button>
-    <button id="skipBtn" class="nbtn">Skip</button>
-  </div>
 </div>
-<div class="hint">space / tap to jump - rotate to fullscreen! &nbsp;·&nbsp; 🥄 +100</div>
+<div class="hint">space / tap to jump &nbsp;·&nbsp; 🥄 +100</div>
 
 <script>
 const WEB_APP_URL='https://script.google.com/macros/s/AKfycbwjEknVWtrvea9VmnW2d19cBWKT1HY2VjtSNmeOxr5HlzF_e6Gi7MTkORF6BLfpcM1_vg/exec';
 
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+
+// ── HiDPI / retina canvas scaling ──
+(function(){
+  const dpr=Math.min(window.devicePixelRatio||1,2); // cap at 2x — 3x is overkill on a game
+  cv.width=700*dpr;cv.height=230*dpr;
+  ctx.scale(dpr,dpr);
+})();
+
+// ── Pause when tab is hidden (saves battery) ──
+let paused=false;
+document.addEventListener('visibilitychange',()=>{paused=document.hidden;});
+
+// ── Prevent iOS rubber-band scroll and context menu ──
+document.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
+document.addEventListener('contextmenu',e=>e.preventDefault());
 const nameBox=document.getElementById('nameBox');
 const nameInput=document.getElementById('nameInput');
 const nameScore=document.getElementById('nameScore');
@@ -58,17 +70,50 @@ let rainPhase=0,rainTick=0,rainAlpha=0,raindrops=[];
 const RAIN_DUR=[600,140,700,200];
 const P={y:GND-PH,vy:0,j:false,dead:false,fr:0,frt:0};
 
-// ── NAME BOX ──
-function showNameBox(){
-  nameScore.textContent='score: '+String(sc).padStart(5,'0');
-  nameInput.value='';
-  nameBox.style.display='block';
-  setTimeout(()=>nameInput.focus(),80);
+// ── CANVAS NAME ENTRY ──
+// We use a hidden <input> purely to summon the mobile keyboard,
+// but draw everything ourselves on canvas so layout doesn't matter.
+const kbd=document.createElement('input');
+kbd.setAttribute('type','text');
+kbd.setAttribute('autocomplete','off');
+kbd.setAttribute('autocorrect','off');
+kbd.setAttribute('autocapitalize','none');
+kbd.setAttribute('spellcheck','false');
+kbd.style.cssText='position:fixed;left:-9999px;top:50%;opacity:0;width:1px;height:1px;font-size:16px;';
+document.body.appendChild(kbd);
+
+let nameEntry='';   // current typed name
+let nameActive=false;
+
+function showNameEntry(){
+  nameEntry='';nameActive=true;
+  st='nameentry';
+  kbd.value='';
+  setTimeout(()=>kbd.focus(),60);
 }
-function hideNameBox(){nameBox.style.display='none';}
+function hideNameEntry(){
+  nameActive=false;
+  kbd.blur();
+}
+
+// sync canvas name from hidden input on every input event
+kbd.addEventListener('input',()=>{
+  nameEntry=kbd.value.slice(0,16);
+});
+kbd.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){doSubmit();e.preventDefault();}
+  if(e.key==='Escape'){hideNameEntry();st='title';}
+  e.stopPropagation();
+});
+
+function doSubmit(){
+  hideNameEntry();
+  const n=(nameEntry.trim()||'anonymous').slice(0,16);
+  submitScore(n);
+}
 
 async function submitScore(name){
-  submitting=true;
+  submitting=true;st='submitting';
   try{
     const r=await fetch(`${WEB_APP_URL}?score=${sc}&name=${encodeURIComponent(name)}`);
     const d=await r.json();
@@ -78,31 +123,32 @@ async function submitScore(name){
   st='leaderboard';
 }
 
-submitBtn.addEventListener('click',()=>{
-  const n=(nameInput.value.trim()||'anonymous').slice(0,16);
-  hideNameBox();submitScore(n);
-});
-skipBtn.addEventListener('click',()=>{hideNameBox();st='title';});
-nameInput.addEventListener('keydown',e=>{
-  if(e.key==='Enter') submitBtn.click();
-  if(e.key==='Escape') skipBtn.click();
-  e.stopPropagation();
-});
-
 // ── INPUT ──
 function jump(){
-  // silently go fullscreen on first interaction (works on Android Chrome, no-ops on iOS)
   if(document.documentElement.requestFullscreen && !document.fullscreenElement){
     document.documentElement.requestFullscreen().catch(()=>{});
   }
+  if(st==='nameentry') return; // don't jump while typing
+  if(st==='submitting') return;
   if(st==='leaderboard'){st='title';return;}
   if(st==='title'){reset();return;}
   if(st==='dead'||submitting) return;
   if(!P.j){P.vy=JV;P.j=true;}
 }
 document.addEventListener('keydown',e=>{if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();jump();}});
-cv.addEventListener('click',jump);
-cv.addEventListener('touchstart',e=>{e.preventDefault();jump();});
+cv.addEventListener('click',e=>{
+  if(st==='nameentry'){nameEntryTap(e.clientX,e.clientY);return;}
+  jump();
+});
+cv.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(st==='nameentry'){
+    const t=e.touches[0];
+    if(!nameEntryTap(t.clientX,t.clientY)) kbd.focus();
+    return;
+  }
+  jump();
+});
 
 function reset(){
   st='playing';sc=0;spd=5;tick=0;bgX=0;lastOb='';
@@ -675,6 +721,55 @@ function drawObs(ob){
   }
 }
 
+// ── NAME ENTRY (drawn on canvas) ──
+function drawNameEntry(){
+  // dim background
+  ctx.fillStyle='rgba(4,12,6,0.92)';ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';ctx.lineCap='butt';
+
+  ctx.fillStyle='#B8F4CC';ctx.font='bold 15px monospace';
+  ctx.fillText('GAME OVER  —  score: '+String(sc).padStart(5,'0'),W/2,38);
+
+  ctx.fillStyle='#4AB870';ctx.font='11px monospace';
+  ctx.fillText('enter your name for the leaderboard',W/2,58);
+
+  // name input box
+  const bw=220,bh=30,bx=W/2-bw/2,by=72;
+  ctx.fillStyle='#0C1E10';ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle='#3ABD68';ctx.lineWidth=1.5;ctx.strokeRect(bx,by,bw,bh);
+  // blinking cursor
+  const shown=nameEntry+(Math.sin(tick*.12)>0?'|':'');
+  ctx.fillStyle='#B8F4CC';ctx.font='bold 14px monospace';
+  ctx.fillText(shown||'|',W/2,by+20);
+
+  // buttons — drawn as rects so we can hit-test taps
+  const sbx=W/2-106,sby=114,sbw=96,sbh=28;
+  const skbx=W/2+10,skby=114,skbw=80,skbh=28;
+  ctx.fillStyle='#2A6A38';ctx.fillRect(sbx,sby,sbw,sbh);
+  ctx.fillStyle='#1A2C1E';ctx.fillRect(skbx,skby,skbw,skbh);
+  ctx.strokeStyle='#2A4A28';ctx.lineWidth=1;ctx.strokeRect(skbx,skby,skbw,skbh);
+  ctx.fillStyle='#B8F4CC';ctx.font='bold 12px monospace';
+  ctx.fillText('submit',sbx+sbw/2,sby+18);
+  ctx.fillStyle='#5A8A68';ctx.font='12px monospace';
+  ctx.fillText('skip',skbx+skbw/2,skby+18);
+  ctx.textAlign='left';
+}
+
+// hit-test canvas button taps during name entry
+function nameEntryTap(ex,ey){
+  // get canvas-space coords
+  const rect=cv.getBoundingClientRect();
+  const sx=(ex-rect.left)/rect.width*W;
+  const sy=(ey-rect.top)/rect.height*H;
+  const sbx=W/2-106,sby=114,sbw=96,sbh=28;
+  const skbx=W/2+10,skby=114,skbw=80,skbh=28;
+  if(sx>=sbx&&sx<=sbx+sbw&&sy>=sby&&sy<=sby+sbh){doSubmit();return true;}
+  if(sx>=skbx&&sx<=skbx+skbw&&sy>=skby&&sy<=skby+skbh){hideNameEntry();st='title';return true;}
+  // tap anywhere else — refocus keyboard
+  kbd.focus();
+  return false;
+}
+
 // ── TITLE ──
 function drawTitle(){
   ctx.fillStyle='rgba(6,16,8,0.82)';ctx.fillRect(0,0,W,H);
@@ -756,8 +851,11 @@ function hit(ob){const p=7;return PX+p<ob.x+ob.w-p&&PX+PW-p>ob.x+p&&P.y+p<ob.y+o
 
 // ── LOOP ──
 function loop(){
+  requestAnimationFrame(loop);
+  if(paused) return;
   tick++;
   if(st==='title'){bgX+=0.9;updateRain();}
+  else if(st==='nameentry'||st==='submitting'){/* pause game, keep drawing */}
   else if(st==='playing'){
     // gentle speed ramp: 5 at start, ~6.5 at score 500, ~8 at score 1500
     sc=Math.floor(tick/6)+bonusPts;
@@ -817,7 +915,7 @@ function loop(){
           popups.push({x:PX+10,y:P.y-8,text:'+100',life:0,color:'#3DDACC'});
           obs.splice(i,1);
         } else {
-          st='dead';P.dead=true;if(sc>hi)hi=sc;setTimeout(showNameBox,350);break;
+          st='dead';P.dead=true;if(sc>hi)hi=sc;setTimeout(showNameEntry,350);break;
         }
       }
     }
@@ -843,8 +941,13 @@ function loop(){
   }
   hud();
   if(st==='title') drawTitle();
+  else if(st==='nameentry') drawNameEntry();
+  else if(st==='submitting'){
+    ctx.fillStyle='rgba(4,12,6,0.92)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#4AB870';ctx.font='12px monospace';ctx.textAlign='center';
+    ctx.fillText('submitting…',W/2,H/2);ctx.textAlign='left';
+  }
   else if(st==='leaderboard') drawLeaderboard();
-  requestAnimationFrame(loop);
 }
 loop();
 </script>
